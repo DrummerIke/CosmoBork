@@ -19,6 +19,11 @@
   const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
   const rand = (a, b) => a + Math.random() * (b - a);
   const models = ASSETS.map(a => ({ ...a, image: new Image(), turnImage: new Image(), ready: false, turnReady: false }));
+  const flightProfiles = [
+    {speed:33, turnTime:8.2, gap:8, inertia:.65, bank:.012, steering:.72, burnTime:2.0, impulse:.35, sheen:.38},
+    {speed:57, turnTime:4.8, gap:5.5, inertia:1.9, bank:.03, steering:1, burnTime:1.05, impulse:.85, sheen:.48},
+    {speed:39, turnTime:2.8, gap:7, inertia:3.6, bank:.017, steering:.62, burnTime:.65, impulse:.45, sheen:.32}
+  ];
   let width = 1, height = 1, dpr = 1, mobile = false;
   let stars = [], ship = null, meteor = null, dust = [], stellarFlare = null;
   let time = 0, previous = 0, renderAt = 0, raf = 0;
@@ -43,6 +48,16 @@
   const coldGlow = glow('198,222,255'), warmGlow = glow('255,152,72');
   // Reuse one small transparent surface for alpha-correct transitions between views.
   const turnSurface = sprite(640,384,()=>{}), turnContext = turnSurface.getContext('2d',{alpha:true});
+  const sheenSurface=sprite(640,384,()=>{}),sheenContext=sheenSurface.getContext('2d',{alpha:true});
+  const sheenLight=sprite(128,64,g=>{
+    const gradient=g.createLinearGradient(0,0,128,0);
+    gradient.addColorStop(0,'rgba(214,235,255,0)');
+    gradient.addColorStop(.37,'rgba(214,235,255,.04)');
+    gradient.addColorStop(.49,'rgba(248,251,255,.65)');
+    gradient.addColorStop(.55,'rgba(219,237,255,.2)');
+    gradient.addColorStop(1,'rgba(214,235,255,0)');
+    g.fillStyle=gradient;g.fillRect(0,0,128,64);
+  });
   const starColors = ['209,228,255','241,242,236','255,216,176'];
   const starHalos = starColors.map(glow);
   const starRays = sprite(96,96,g=>{
@@ -98,7 +113,7 @@
       const oldDuration=craft.duration,progress=craft.age/oldDuration;
       craft.w=Math.min(width*.46,craft.model.width*(mobile?.73:1))*craft.depth;
       craft.h=craft.w*craft.model.image.naturalHeight/craft.model.image.naturalWidth;
-      craft.velocity=([43,53,35][models.indexOf(craft.model)])*(mobile?.7:1)*craft.depth;
+      craft.velocity=craft.profile.speed*(mobile?.7:1)*craft.depth;
       craft.duration=(width+craft.w*1.8)/craft.velocity;
       const ratio=craft.duration/oldDuration;
       craft.age=progress*craft.duration;craft.maneuverStart*=ratio;craft.maneuverDuration*=ratio;craft.maneuverGap*=ratio;
@@ -113,18 +128,19 @@
     if (!models[mi]?.ready) mi = ready[0];
     lastModel = mi;
     const model = models[mi];
+    const profile=flightProfiles[mi];
     // Different craft mass / flight distance. No scale pulsing or sinusoidal bobbing.
     const depth=rand(.87,1);
     const w = Math.min(width*.46, model.width*(mobile?.73:1))*depth;
     const direction = Math.random()<.5 ? -1 : 1;
-    const velocity=([43,53,35][mi])*(mobile?.7:1)*depth;
+    const velocity=profile.speed*(mobile?.7:1)*depth;
     const duration=(width+w*1.8)/velocity;
-    const slopeLimit=Math.min(.055,height*.12/(width+w*1.8));
+    const slopeLimit=Math.min(.055*profile.steering,height*.12/(width+w*1.8));
     const initialSlope=rand(-slopeLimit*.45,slopeLimit*.45);
     const finalSlope=clamp(initialSlope+(Math.random()<.5?-1:1)*rand(slopeLimit*.6,slopeLimit*.95),-slopeLimit,slopeLimit);
-    const craft = {model, direction, age:0, w, h:w*model.image.naturalHeight/model.image.naturalWidth,
+    const craft = {model, profile, direction, age:0, w, h:w*model.image.naturalHeight/model.image.naturalWidth,
       duration,velocity,initialSlope,finalSlope,depth,
-      maneuverStart:duration*rand(.18,.23),maneuverDuration:rand(4.8,6),maneuverGap:rand(3.5,5),
+      maneuverStart:duration*.27,maneuverDuration:profile.turnTime*rand(.94,1.06),maneuverGap:profile.gap*rand(.94,1.06),
       y: height*rand(.19,.34), phase:rand(0,TAU),angle:Math.atan(initialSlope)*direction,
       label:labels[labelIndex++%labels.length], dustAt:0};
     craft.age = craft.duration*clamp(at,0,1);
@@ -150,10 +166,31 @@
   function attitude(s) {
     return Math.atan(course(s,.65).slope)*s.direction;
   }
+  function propulsion(s) {
+    // Integrate a finite sin² acceleration pulse. Velocity persists after thrust ends.
+    const period=s.maneuverDuration+s.maneuverGap;
+    const first=s.maneuverStart+s.maneuverDuration*.22;
+    const length=s.profile.burnTime,gain=s.profile.impulse;
+    let extraDistance=0,extraSpeed=0,throttle=.012;
+    const count=Math.max(0,Math.floor((s.age-first)/period)+1);
+    for(let i=0;i<count;i++) {
+      const elapsed=s.age-first-i*period,u=clamp(elapsed/length,0,1);
+      if(elapsed>=length){extraSpeed+=gain;extraDistance+=gain*(elapsed-length*.5);}
+      else {
+        const phase=u*TAU;
+        extraSpeed+=gain*(u-Math.sin(phase)/TAU);
+        extraDistance+=gain*length*(u*u*.5+(Math.cos(phase)-1)/(TAU*TAU));
+        throttle+=.95*Math.sin(Math.PI*u)**2;
+      }
+    }
+    return {extraDistance,extraSpeed,throttle};
+  }
   function pose(s) {
     const p = clamp(s.age/s.duration,0,1);
     const distance = width+s.w*1.8;
-    const x = s.direction===1 ? -s.w*.9+p*distance : width+s.w*.9-p*distance;
+    const engine=propulsion(s);
+    const travelled=p*distance+engine.extraDistance;
+    const x = s.direction===1 ? -s.w*.9+travelled : width+s.w*.9-travelled;
     const y = s.y+s.velocity*course(s).vertical;
     const elapsed=s.age-s.maneuverStart,period=s.maneuverDuration+s.maneuverGap;
     const cycle=Math.max(0,Math.floor(elapsed/period));
@@ -163,8 +200,10 @@
     const jet=(center)=>Math.exp(-Math.pow((phase-center)/.038,2));
     const jets=phase>0&&phase<1?[jet(.12)+jet(.22)*.7,jet(.78)*.7+jet(.88)]:[0,0];
     const h=s.model.turnReady?s.h+(s.w*s.model.turnImage.naturalHeight/s.model.turnImage.naturalWidth-s.h)*turn:s.h;
-    const bank=burn*.024*s.direction*(cycle%2?-1:1);
-    return {x,y,angle:s.angle+bank,p,burn,turn,jets,h,cycle};
+    const bank=burn*s.profile.bank*s.direction*(cycle%2?-1:1);
+    return {x,y,angle:s.angle+bank,p,burn,turn,jets,h,cycle,phase,
+      throttle:engine.throttle,actualSpeed:s.velocity+engine.extraSpeed,
+      sheen:burn*burn*s.profile.sheen};
   }
   function nozzles(s,p) {
     return s.model.nozzles.map((n,i)=>{
@@ -182,10 +221,10 @@
     if (!ship && time>=nextShip) spawnShip();
     if (ship) {
       ship.age += dt;
-      const inertia=ship.model.name==='surveyor'?1.2:2;
+      const inertia=ship.profile.inertia;
       ship.angle+=(attitude(ship)-ship.angle)*(1-Math.exp(-dt*inertia));
       const p=pose(ship);
-      if (time>=ship.dustAt && p.p>.08 && p.p<.92 && dust.length<24) {
+      if (p.throttle>.12 && time>=ship.dustAt && p.p>.08 && p.p<.92 && dust.length<24) {
         ship.dustAt=time+(lowQuality()?.22:.13);
         for (const n of nozzles(ship,p).slice(0,lowQuality()?1:2)) {
           if(dust.length>=24)break;
@@ -240,13 +279,15 @@
     const alpha=Math.min(1,p.p*14,(1-p.p)*14)*(.86+s.depth*.14);
     ctx.save(); ctx.globalAlpha=alpha; ctx.translate(p.x,p.y);ctx.rotate(p.angle);ctx.scale(flip,1);
     // Quiet cruise thrust rises gently for the one course correction.
-    const pulse=.42+p.burn*.5+Math.sin(time*3.1+s.phase)*.018;
+    const pulse=.08+p.throttle*.95;
     const activeNozzles=nozzles(s,p);
     for(const n of activeNozzles) {
       const x=(n[0]-.5)*s.w,y=(n[1]-.5)*h;
       const length=s.w*.34*pulse, plumeHeight=s.w*(n[2]||.07);
+      ctx.globalAlpha=alpha*Math.min(1,p.throttle*1.2);
       ctx.drawImage(exhaust,x-length*.03,y-plumeHeight/2,length,plumeHeight);
     }
+    ctx.globalAlpha=alpha;
     if(p.turn<.001)ctx.drawImage(s.model.image,-s.w/2,-h/2,s.w,h);
     else if(p.turn>.999)ctx.drawImage(s.model.turnImage,-s.w/2,-h/2,s.w,h);
     else {
@@ -270,11 +311,24 @@
       turnContext.globalAlpha=1;turnContext.globalCompositeOperation='source-over';
       ctx.drawImage(turnSurface,0,0,bw,bh,-s.w/2,-h/2,s.w,h);
     }
+    if(p.sheen>.005) {
+      const bw=Math.min(640,Math.ceil(s.w*dpr)),bh=Math.min(384,Math.ceil(h*dpr));
+      sheenContext.clearRect(0,0,640,384);sheenContext.globalCompositeOperation='source-over';
+      sheenContext.save();sheenContext.translate((1.15-clamp(p.phase,0,1)*1.3)*bw,bh*.5);sheenContext.rotate(-.3);
+      sheenContext.drawImage(sheenLight,-bw*.16,-bh*1.5,bw*.32,bh*3);sheenContext.restore();
+      // The highlight is masked by the exact current hull; never by a rectangular image box.
+      sheenContext.globalCompositeOperation='destination-in';
+      if(p.turn<.001)sheenContext.drawImage(s.model.image,0,0,bw,bh);
+      else if(p.turn>.999)sheenContext.drawImage(s.model.turnImage,0,0,bw,bh);
+      else sheenContext.drawImage(turnSurface,0,0,bw,bh,0,0,bw,bh);
+      sheenContext.globalCompositeOperation='source-over';ctx.globalAlpha=alpha*p.sheen;
+      ctx.drawImage(sheenSurface,0,0,bw,bh,-s.w/2,-h/2,s.w,h);ctx.globalAlpha=alpha;
+    }
     for(const n of activeNozzles) {
       const x=(n[0]-.5)*s.w,y=(n[1]-.5)*h;
       const r=s.w*.055*pulse;
-      ctx.globalAlpha=alpha*.66;ctx.drawImage(warmGlow,x-r/2,y-r/2,r,r);
-      ctx.globalAlpha=alpha*.83;ctx.fillStyle='#fff0d9';
+      ctx.globalAlpha=alpha*.66*p.throttle;ctx.drawImage(warmGlow,x-r/2,y-r/2,r,r);
+      ctx.globalAlpha=alpha*(.025+.8*p.throttle);ctx.fillStyle='#fff0d9';
       ctx.beginPath();ctx.ellipse(x,y,Math.max(.45,s.w*.0024),Math.max(.8,s.w*.006),0,0,TAU);ctx.fill();
     }
     {
