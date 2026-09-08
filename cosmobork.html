@@ -21,9 +21,9 @@
   const rand = (a, b) => a + Math.random() * (b - a);
   const models = ASSETS.map(a => ({ ...a, image: new Image(), turnImage: new Image(), ready: false, turnReady: false }));
   const flightProfiles = [
-    {speed:33, turnTime:8.2, gap:8, inertia:.65, bank:.012, steering:.72, burnTime:2.0, impulse:.35, sheen:.38},
-    {speed:57, turnTime:4.8, gap:5.5, inertia:1.9, bank:.03, steering:1, burnTime:1.05, impulse:.85, sheen:.48},
-    {speed:39, turnTime:2.8, gap:7, inertia:3.6, bank:.017, steering:.62, burnTime:.65, impulse:.45, sheen:.32}
+    {speed:33, turnTime:8.2, gap:3.8, inertia:.65, bank:.065, steering:.72, burnTime:2.0, impulse:.35, sheen:.38},
+    {speed:57, turnTime:4.8, gap:2.8, inertia:1.9, bank:.095, steering:1, burnTime:1.05, impulse:.85, sheen:.48},
+    {speed:39, turnTime:2.8, gap:3.2, inertia:3.6, bank:.07, steering:.62, burnTime:.65, impulse:.45, sheen:.32}
   ];
   let width = 1, height = 1, dpr = 1, mobile = false;
   let stars = [], ship = null, meteor = null, dust = [], stellarFlare = null;
@@ -49,22 +49,48 @@
     g.fillStyle = gradient; g.fillRect(0,0,64,64);
   });
   const coldGlow = glow('198,222,255'), warmGlow = glow('255,152,72');
-  const satelliteSprite=sprite(138,72,g=>{
-    g.translate(69,36);g.rotate(-.18);
-    g.strokeStyle='#8b9cab';g.lineWidth=2;g.beginPath();g.moveTo(-48,0);g.lineTo(48,0);g.stroke();
-    for(const x of [-61,17]) {
-      const panel=g.createLinearGradient(x,-15,x+44,15);panel.addColorStop(0,'#304b72');panel.addColorStop(.5,'#173050');panel.addColorStop(1,'#436282');
-      g.fillStyle=panel;g.fillRect(x,-15,44,30);g.strokeStyle='#95a4b3';g.lineWidth=1;g.strokeRect(x,-15,44,30);
-      g.strokeStyle='#b3c7df55';g.lineWidth=.5;
-      for(let n=1;n<6;n++){g.beginPath();g.moveTo(x+n*44/6,-15);g.lineTo(x+n*44/6,15);g.stroke();}
-      for(let n=1;n<4;n++){g.beginPath();g.moveTo(x,-15+n*7.5);g.lineTo(x+44,-15+n*7.5);g.stroke();}
+  function satellitePose(a) {
+    // Slow sun-tracking hinges; the second array follows with a small actuator delay.
+    const hinge=t=>.78+.62*Math.sin(t*.43)+.14*Math.sin(t*.17);
+    return {left:hinge(a.age),right:hinge(a.age-.75),
+      yaw:.32+.24*Math.sin(a.age*.19),pitch:.38+.12*Math.sin(a.age*.23),
+      roll:a.angle+.13*Math.sin(a.age*.16)};
+  }
+  function drawSatellite(a) {
+    const pose=satellitePose(a),size=46*(mobile?.8:1)/122;
+    ctx.save();ctx.rotate(pose.roll);ctx.scale(size,size);
+    const cy=Math.cos(pose.yaw),sy=Math.sin(pose.yaw),cp=Math.cos(pose.pitch),sp=Math.sin(pose.pitch);
+    const project=([x,y,z])=>{const X=x*cy+z*sy,Z=z*cy-x*sy;return [X,y*cp-Z*sp,y*sp+Z*cp];};
+    const faces=[];
+    const face=(points,color,stroke)=>{const p=points.map(project);faces.push({p,color,stroke,z:p.reduce((s,v)=>s+v[2],0)/p.length});};
+    // Each panel is a rigid hinged surface, not a stretched flat sprite.
+    for(const side of [-1,1]) {
+      const angle=side<0?pose.left:pose.right,c=Math.cos(angle),sn=Math.sin(angle);
+      const point=(u,v)=>[side*(17+u),v*c,v*sn];
+      const light=.48+.52*Math.max(0,c*.8+sn*.4);
+      const panelColor='rgb('+Math.round(28*light)+','+Math.round(66*light)+','+Math.round(109*light)+')';
+      face([point(0,-16),point(44,-16),point(44,16),point(0,16)],panelColor,'#a6b5c6');
+      for(let u=0;u<6;u++)for(let v=0;v<3;v++) {
+        const x=u*7.33+1,y=v*10.66-15;
+        face([point(x,y),point(x+5.7,y),point(x+5.7,y+8.7),point(x,y+8.7)],panelColor,'#91aed04d');
+      }
+      face([[side*10,-1,0],[side*18,-1,0],[side*18,1,0],[side*10,1,0]],'#aeb8bd');
     }
-    const hull=g.createLinearGradient(-12,-13,12,13);hull.addColorStop(0,'#f0ede0');hull.addColorStop(.3,'#b7bec1');hull.addColorStop(1,'#444f5b');
-    g.fillStyle=hull;g.fillRect(-12,-12,24,24);g.strokeStyle='#c7cbd0';g.strokeRect(-12,-12,24,24);
-    g.fillStyle='#505c69';g.fillRect(5,-8,5,16);g.fillStyle='#c4a271';g.fillRect(-10,9,12,3);
-    g.strokeStyle='#a8b2bf';g.lineWidth=1;g.beginPath();g.moveTo(0,-12);g.lineTo(3,-23);g.stroke();
-    g.fillStyle='#bcc7cc';g.beginPath();g.ellipse(2,-22,7,3,-.3,0,TAU);g.fill();
-  });
+    const x=11,y=12,z=9;
+    face([[-x,-y,z],[x,-y,z],[x,y,z],[-x,y,z]],'#aebac2','#dce4e6');
+    face([[-x,-y,-z],[x,-y,-z],[x,y,-z],[-x,y,-z]],'#505e6b');
+    face([[-x,-y,-z],[-x,-y,z],[-x,y,z],[-x,y,-z]],'#778797');
+    face([[x,-y,-z],[x,-y,z],[x,y,z],[x,y,-z]],'#435260');
+    face([[-x,-y,-z],[x,-y,-z],[x,-y,z],[-x,-y,z]],'#e3e5df');
+    face([[-x,y,-z],[x,y,-z],[x,y,z],[-x,y,z]],'#8c7960');
+    face([[-7,-7,9.1],[4,-7,9.1],[4,6,9.1],[-7,6,9.1]],'#cdd3d2','#eef0e8');
+    faces.sort((a,b)=>a.z-b.z);
+    for(const f of faces){ctx.beginPath();f.p.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.fillStyle=f.color;ctx.fill();if(f.stroke){ctx.lineWidth=.65;ctx.strokeStyle=f.stroke;ctx.stroke();}}
+    const mast=project([0,-23,0]),base=project([0,-12,0]);
+    ctx.strokeStyle='#c3cdd2';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(...base.slice(0,2));ctx.lineTo(...mast.slice(0,2));ctx.stroke();
+    ctx.fillStyle='#d0d9dc';ctx.beginPath();ctx.ellipse(mast[0],mast[1],6,2.5,pose.yaw,0,TAU);ctx.fill();
+    ctx.restore();
+  }
   const cometTail=sprite(256,64,g=>{
     for(const [spread,alpha,bend] of [[22,.12,9],[9,.23,3],[2,.35,0]]) {
       const gradient=g.createLinearGradient(0,32,256,32);
@@ -168,7 +194,7 @@
     const finalSlope=clamp(initialSlope+(Math.random()<.5?-1:1)*rand(slopeLimit*.6,slopeLimit*.95),-slopeLimit,slopeLimit);
     const craft = {model, profile, direction, age:0, w, h:w*model.image.naturalHeight/model.image.naturalWidth,
       duration,velocity,initialSlope,finalSlope,depth,
-      maneuverStart:duration*.27,maneuverDuration:profile.turnTime*rand(.94,1.06),maneuverGap:profile.gap*rand(.94,1.06),
+      maneuverStart:duration*.18,maneuverDuration:profile.turnTime*rand(.94,1.06),maneuverGap:profile.gap*rand(.94,1.06),
       y: height*rand(.19,.34), phase:rand(0,TAU),angle:Math.atan(initialSlope)*direction,
       label:labels[labelIndex++%labels.length], dustAt:0};
     craft.age = craft.duration*clamp(at,0,1);
@@ -266,8 +292,7 @@
       ctx.drawImage(coldGlow,-8,-8,16,16);
       ctx.fillStyle='#e2edfa';ctx.beginPath();ctx.arc(0,0,1.1,0,TAU);ctx.fill();
     } else if(a.kind==='satellite') {
-      ctx.rotate(a.angle+a.age*a.spin);const w=46*(mobile?.8:1);
-      ctx.drawImage(satelliteSprite,-w/2,-w*72/138/2,w,w*72/138);
+      drawSatellite(a);
     } else {
       ctx.rotate(a.angle+a.age*a.spin);
       const w=a.model.width*(mobile?.8:1),h=w*a.model.image.naturalHeight/a.model.image.naturalWidth;
@@ -347,9 +372,10 @@
     const activeNozzles=nozzles(s,p);
     for(const n of activeNozzles) {
       const x=(n[0]-.5)*s.w,y=(n[1]-.5)*h;
-      const length=s.w*.34*pulse, plumeHeight=s.w*(n[2]||.07);
+      const length=s.w*.42*pulse, plumeHeight=s.w*(n[2]||.07);
       ctx.globalAlpha=alpha*Math.min(1,p.throttle*1.2);
-      ctx.drawImage(exhaust,x-length*.03,y-plumeHeight/2,length,plumeHeight);
+      ctx.save();ctx.translate(x,y);ctx.rotate(Math.sin(p.phase*Math.PI*2)*p.burn*.09);
+      ctx.drawImage(exhaust,-length*.03,-plumeHeight/2,length,plumeHeight);ctx.restore();
     }
     ctx.globalAlpha=alpha;
     if(p.turn<.001)ctx.drawImage(s.model.image,-s.w/2,-h/2,s.w,h);
@@ -483,7 +509,7 @@
     preview(index=0){if(reduced)return;spawnShip(index,.46);dust=[];draw();},
     previewAmbient(kind='satellite'){if(reduced||!['satellite','asteroid','comet'].includes(kind))return;spawnAmbient(kind,.46);draw();},
     previewManeuver(index=lastModel<0?0:lastModel){if(reduced)return;spawnShip(index);if(ship){ship.age=Math.max(0,ship.maneuverStart-.5);ship.angle=attitude(ship);}dust=[];paused=false;synchronize();},
-    getState(){return {width,height,dpr,time,paused,reduced,running:!!raf,assets:models.filter(m=>m.ready).length,views:models.filter(m=>m.turnReady).length,ambientAssets:ambientModels.filter(m=>m.ready).length,ambient:ambient?{kind:ambient.kind,age:ambient.age,duration:ambient.duration}:null,particles:dust.length,ship:lastModel,stars:stars.length,flight:ship?{...pose(ship),duration:ship.duration,velocity:ship.velocity}:null};},
+    getState(){return {width,height,dpr,time,paused,reduced,running:!!raf,assets:models.filter(m=>m.ready).length,views:models.filter(m=>m.turnReady).length,ambientAssets:ambientModels.filter(m=>m.ready).length,ambient:ambient?{kind:ambient.kind,age:ambient.age,duration:ambient.duration,pose:ambient.kind==='satellite'?satellitePose(ambient):null}:null,particles:dust.length,ship:lastModel,stars:stars.length,flight:ship?{...pose(ship),duration:ship.duration,velocity:ship.velocity}:null};},
     destroy(){stopped=true;cancelAnimationFrame(raf);observer.disconnect();intersection.disconnect();document.removeEventListener('visibilitychange',onVisibility);motionQuery.removeEventListener('change',onMotion);root.remove();delete window.CosmoBork;}
   };
   resize();synchronize();
