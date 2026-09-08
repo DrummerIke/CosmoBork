@@ -145,7 +145,7 @@
   let width = 1, height = 1, dpr = 1, mobile = false;
   let stars = [], ship = null, meteor = null, dust = [], stellarFlare = null;
   let ambient=null,nextAmbient=5,ambientIndex=0;
-  const ambientOrder=['satellite','asteroid','satellite','asteroid','comet'];
+  const ambientOrder=['satellite','launch','asteroid','satellite','comet'];
   let time = 0, previous = 0, renderAt = 0, raf = 0;
   let nextShip = .7, nextMeteor = 12, nextFlare = 3, labelIndex = 0, modelIndex = 0;
   let stopped = false, paused = false, visible = true, reduced = motionQuery.matches;
@@ -373,16 +373,61 @@
     return {x:p.x+lx*Math.cos(p.angle)-ly*Math.sin(p.angle),
       y:p.y+lx*Math.sin(p.angle)+ly*Math.cos(p.angle)};
   }
+  // Launch is a short illustrative event, with bounded analytic debris trajectories.
+  const rocketParts=['upper','core','booster'].map(kind=>sprite(48,180,g=>{
+    g.translate(24,0);
+    const paint=g.createLinearGradient(-12,0,12,0);paint.addColorStop(0,'#3c4a47');paint.addColorStop(.35,'#d3d7ce');paint.addColorStop(.55,'#f1f1e9');paint.addColorStop(1,'#596760');
+    g.fillStyle=paint;g.beginPath();
+    if(kind==='upper'){g.moveTo(0,2);g.lineTo(3,20);g.lineTo(3,34);g.lineTo(10,48);g.lineTo(10,76);g.lineTo(7,86);g.lineTo(7,108);g.lineTo(-7,108);g.lineTo(-7,86);g.lineTo(-10,76);g.lineTo(-10,48);g.lineTo(-3,34);g.lineTo(-3,20);}
+    else if(kind==='core'){g.rect(-9,4,18,135);}
+    else{g.moveTo(-3,4);g.bezierCurveTo(-5,18,-11,40,-11,68);g.lineTo(-11,133);g.lineTo(11,133);g.lineTo(11,68);g.bezierCurveTo(11,40,5,18,3,4);}
+    g.closePath();g.fill();
+    g.fillStyle='#be7145';if(kind==='upper')g.fillRect(-7,99,14,5);else g.fillRect(kind==='core'?-9:-11,118,kind==='core'?18:22,8);
+    g.strokeStyle='#677573';g.lineWidth=.7;for(const y of kind==='upper'?[55,75,91]:[47,80,106]){g.beginPath();g.moveTo(-8,y);g.lineTo(8,y);g.stroke();}
+    if(kind!=='upper'){g.fillStyle='#333b3e';for(const x of [-6,2])g.fillRect(x,kind==='core'?139:133,4,7);}
+  }));
+  function launchPose(a) {
+    const scale=mobile?.72:1,t=a.age,v=(height+170)/22;
+    const x=width*(.64+a.slope),y=height+65-v*t;
+    const debris=[];
+    for(let i=0;i<4;i++){
+      const side=i%2?1:-1,depth=i<2?.72:1,dt=Math.max(0,t-8);
+      debris.push({kind:'booster',x:x+side*(9*depth+dt*(i<2?9:16))*scale,
+        y:dt?height+65-v*8+8*scale-v*dt+height*.025*dt*dt:y+8*scale,
+        angle:side*(dt*.22),scale:scale*depth,alpha:t<8?1:1-smooth((dt-5)/4),detached:t>=8});
+    }
+    const dt=Math.max(0,t-13);
+    if(t>=13)debris.push({kind:'core',x:x+dt*3*scale,y:height+65-v*13-v*dt+height*.024*dt*dt,
+      angle:dt*.13,scale,alpha:1-smooth((dt-4)/4),detached:true});
+    return {x,y,scale,stage:t<8?1:t<13?2:3,debris};
+  }
+  function drawLaunch(a) {
+    const p=launchPose(a),fade=smooth(a.age/2)*smooth((a.duration-a.age)/2);
+    const part=(type,x,y,scale,angle=0,alpha=1,burning=false)=>{
+      if(alpha<=0)return;ctx.save();ctx.translate(x,y);ctx.rotate(angle);ctx.scale(scale,scale);ctx.globalAlpha=fade*alpha;
+      const h=type==='upper'?45:type==='core'?56:46,w=type==='booster'?13:19;
+      ctx.drawImage(rocketParts[['upper','core','booster'].indexOf(type)],-w/2,0,w,h);
+      if(burning){ctx.save();ctx.translate(0,h*(type==='upper'?.6:.8));ctx.rotate(Math.PI/2);ctx.globalAlpha*=.7+.05*Math.sin(a.age*23);ctx.drawImage(exhaust,0,-6,38,12);ctx.restore();}
+      ctx.restore();
+    };
+    // Rear boosters, core, then front boosters: four blocks, not mirrored copies.
+    for(const b of p.debris.slice(0,2))part(b.kind,b.x,b.y,b.scale,b.angle,b.alpha,!b.detached);
+    if(p.stage<3)part('core',p.x,p.y,p.scale,0,1,true);
+    part('upper',p.x,p.y-25*p.scale,p.scale,0,1,p.stage===3);
+    for(const b of p.debris.slice(2))part(b.kind,b.x,b.y,b.scale,b.angle,b.alpha,!b.detached);
+  }
+
   function spawnAmbient(kind,at=0) {
     const model=ambientModels.find(m=>m.name===kind);
     if(kind==='asteroid'&&!model?.ready)return false;
-    ambient={kind,model,age:0,duration:kind==='comet'?24:kind==='satellite'?55:65,
+    ambient={kind,model,age:0,duration:kind==='launch'?24:kind==='comet'?24:kind==='satellite'?55:65,
       direction:Math.random()<.5?-1:1,y:rand(.46,.61),slope:rand(-.045,.045),
       angle:rand(-.3,.3),spin:kind==='asteroid'?rand(.045,.075):rand(-.006,.006)};
     ambient.age=ambient.duration*clamp(at,0,1);meteor=null;return true;
   }
   function drawAmbient() {
     const a=ambient,p=a.age/a.duration;
+    if(a.kind==='launch'){drawLaunch(a);return;}
     const margin=a.kind==='comet'?200:60;
     const x=a.direction===1?-margin+p*(width+margin*2):width+margin-p*(width+margin*2);
     const y=height*a.y+(p-.5)*height*a.slope;
@@ -505,13 +550,6 @@
     }
     ctx.restore();
 
-    // Label lives in screen space; never mirrors or tilts with the craft.
-    const ly=p.y+h*.5+Math.abs(Math.sin(p.angle))*s.w*.5+13;
-    ctx.save();ctx.globalAlpha=alpha*.72;ctx.fillStyle='#ec9b5f';
-    ctx.font='500 10px Arial, sans-serif';const labelWidth=ctx.measureText(s.label).width;
-    ctx.beginPath();ctx.arc(p.x-labelWidth/2-6,ly-3,1.3,0,TAU);ctx.fill();
-    ctx.font='500 10px Arial, sans-serif';ctx.fillStyle='#c4c9d0';
-    ctx.textBaseline='middle';ctx.fillText(s.label,p.x-labelWidth/2,ly-2.5);ctx.restore();
   }
   function draw() {
     ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -566,13 +604,14 @@
     setSpeed(value){speed=clamp(Number(value)||1,.25,4);},
     setQuality(value){mode=['auto','eco','high'].includes(value)?value:'auto';resize();},
     preview(index=0){if(reduced)return;spawnShip(index,.46);dust=[];draw();},
-    previewAmbient(kind='satellite'){if(reduced||!['satellite','asteroid','comet'].includes(kind))return;spawnAmbient(kind,.46);draw();},
+    previewAmbient(kind='satellite'){if(reduced||!['satellite','asteroid','comet','launch'].includes(kind))return;spawnAmbient(kind,kind==='launch'?.16:.46);draw();},
     previewManeuver(index=lastModel<0?0:lastModel){if(reduced)return;spawnShip(index);if(ship){ship.age=Math.max(0,ship.maneuverStart-.5);ship.angle=attitude(ship);}dust=[];paused=false;synchronize();},
-    getState(){return {width,height,dpr,time,paused,reduced,running:!!raf,assets:models.filter(m=>m.ready).length,views:models.filter(m=>m.turnReady).length,ambientAssets:ambientModels.filter(m=>m.ready).length,ambient:ambient?{kind:ambient.kind,age:ambient.age,duration:ambient.duration,pose:ambient.kind==='satellite'?satellitePose(ambient):null}:null,particles:dust.length,ship:lastModel,stars:stars.length,flight:ship?{...pose(ship),duration:ship.duration,velocity:ship.velocity}:null};},
+    getState(){return {width,height,dpr,time,paused,reduced,running:!!raf,assets:models.filter(m=>m.ready).length,views:models.filter(m=>m.turnReady).length,ambientAssets:ambientModels.filter(m=>m.ready).length,ambient:ambient?{kind:ambient.kind,age:ambient.age,duration:ambient.duration,pose:ambient.kind==='satellite'?satellitePose(ambient):ambient.kind==='launch'?launchPose(ambient):null}:null,particles:dust.length,ship:lastModel,stars:stars.length,flight:ship?{...pose(ship),duration:ship.duration,velocity:ship.velocity}:null};},
     destroy(){stopped=true;cancelAnimationFrame(raf);observer.disconnect();intersection.disconnect();document.removeEventListener('visibilitychange',onVisibility);motionQuery.removeEventListener('change',onMotion);root.remove();delete window.CosmoBork;}
   };
   resize();synchronize();
 })();
+
 
 </script>
   <header><div class="brand">Cosmo<span>Bork</span></div><div class="status">Прозрачный слой</div></header>
@@ -581,11 +620,12 @@
     <div><p class="hint">Проверьте, как графика смотрится на вашем фоне.</p><div class="row" aria-label="Фон предпросмотра">
       <button data-bg="dark" aria-pressed="true">Графит</button><button data-bg="warm" aria-pressed="false">Тёплый</button><button data-bg="light" aria-pressed="false">Светлый</button><button data-bg="gradient" aria-pressed="false">Градиент</button><button data-bg="grid" aria-pressed="false">Сетка</button>
     </div></div>
-    <div class="controls" style="flex-wrap:wrap"><button id="next">Другой корабль</button><button id="maneuver">Манёвр</button><button id="object">Спутник</button><button id="pause" aria-pressed="false">Пауза</button></div>
+    <div class="controls" style="flex-wrap:wrap"><button id="next">Другой корабль</button><button id="maneuver">Манёвр</button><button id="object">Спутник</button><button id="launch">Запуск ракеты</button><button id="pause" aria-pressed="false">Пауза</button></div>
   </footer>
   <script>
     let index=0,paused=false;
     const api=()=>window.CosmoBork;
+    document.querySelector('#launch').onclick=()=>{api()?.previewAmbient('launch');api()?.resume();paused=false;document.querySelector('#pause').textContent='Пауза';document.querySelector('#pause').setAttribute('aria-pressed','false');};
     let objectIndex=0;
     const objectKinds=['satellite','asteroid','comet'],objectLabels=['Спутник','Астероид','Комета'];
     document.querySelector('#object').onclick=e=>{api()?.previewAmbient(objectKinds[objectIndex]);objectIndex=(objectIndex+1)%3;e.target.textContent=objectLabels[objectIndex];};
