@@ -21,7 +21,7 @@
 
 ## Файлы и производительность
 
-- `cosmobork.html` / `CosmoBork-full-code.txt` — полный код, около 34 КБ (около 14 КБ gzip).
+- `cosmobork.html` / `CosmoBork-full-code.txt` — полный код, около 37 КБ (около 15 КБ gzip).
 - `embed-fragment.html` / `CosmoBork-embed-code.txt` — готовый фрагмент для HTML-блока.
 - `preview.html` — демонстрация с переключением подложек, аппаратов и манёвров.
 - `build-info.json` — точный размер сборки.
@@ -50,3 +50,7 @@ CosmoBork.previewManeuver(0);
 CosmoBork.previewAmbient('satellite'); // asteroid / comet
 CosmoBork.destroy();
 ```
+
+
+Подписи под аппаратами удалены. Добавлен редкий декоративный запуск ракеты «Союз»: четыре боковых блока отделяются, расходятся, затем падают и исчезают; позже отделяется центральный блок, верхняя часть продолжает подъём. Время и траектории художественно сокращены. В предпросмотре — кнопка «Запуск ракеты», программно — CosmoBork.previewAmbient('launch'). Схема отделения сверена с ESA: https://www.esa.int/ESA_Multimedia/Images/2018/10/Soyuz_FG_rocket_and_liftoff_sequence . Проверены оба этапа отделения и ограничение до пяти отделившихся частей.
+
